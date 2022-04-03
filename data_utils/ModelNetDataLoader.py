@@ -113,7 +113,7 @@ class ModelNetDataLoader(Dataset):
         return len(self.datapath)
 
     def _get_item(self, index):
-        if self.process_data:
+        if self.process_data: # data has been processed in the first run
             point_set, label = self.list_of_points[index], self.list_of_labels[index]
         else:
             fn = self.datapath[index]

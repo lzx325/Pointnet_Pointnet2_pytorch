@@ -4,6 +4,7 @@ Date: Nov 2019
 """
 
 import os
+import pdb
 import sys
 import torch
 import numpy as np
@@ -113,7 +114,7 @@ def main(args):
     logger.addHandler(file_handler)
     log_string('PARAMETER ...')
     log_string(args)
-
+     
     '''DATA LOADING'''
     log_string('Load dataset ...')
     data_path = 'data/modelnet40_normal_resampled/'
@@ -122,7 +123,7 @@ def main(args):
     test_dataset = ModelNetDataLoader(root=data_path, args=args, split='test', process_data=args.process_data)
     trainDataLoader = torch.utils.data.DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, num_workers=10, drop_last=True)
     testDataLoader = torch.utils.data.DataLoader(test_dataset, batch_size=args.batch_size, shuffle=False, num_workers=10)
-
+    
     '''MODEL LOADING'''
     num_class = args.num_category
     model = importlib.import_module(args.model)
@@ -133,7 +134,7 @@ def main(args):
     classifier = model.get_model(num_class, normal_channel=args.use_normals)
     criterion = model.get_loss()
     classifier.apply(inplace_relu)
-
+ 
     if not args.use_cpu:
         classifier = classifier.cuda()
         criterion = criterion.cuda()
@@ -174,7 +175,6 @@ def main(args):
         scheduler.step()
         for batch_id, (points, target) in tqdm(enumerate(trainDataLoader, 0), total=len(trainDataLoader), smoothing=0.9):
             optimizer.zero_grad()
-
             points = points.data.numpy()
             points = provider.random_point_dropout(points)
             points[:, :, 0:3] = provider.random_scale_point_cloud(points[:, :, 0:3])

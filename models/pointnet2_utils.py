@@ -40,7 +40,7 @@ def square_distance(src, dst):
     return dist
 
 
-def index_points(points, idx):
+def index_points(points, idx): # lizx: gather_nd semantics
     """
 
     Input:
@@ -60,7 +60,7 @@ def index_points(points, idx):
     return new_points
 
 
-def farthest_point_sample(xyz, npoint):
+def farthest_point_sample(xyz, npoint): # This is the torch version farthese_point_sample
     """
     Input:
         xyz: pointcloud data, [B, N, 3]
@@ -71,8 +71,8 @@ def farthest_point_sample(xyz, npoint):
     device = xyz.device
     B, N, C = xyz.shape
     centroids = torch.zeros(B, npoint, dtype=torch.long).to(device)
-    distance = torch.ones(B, N).to(device) * 1e10
-    farthest = torch.randint(0, N, (B,), dtype=torch.long).to(device)
+    distance = torch.ones(B, N).to(device) * 1e10 # lizx: initialize to infinity, records the minimum distance of a point to the selected centroids
+    farthest = torch.randint(0, N, (B,), dtype=torch.long).to(device) # lizx: randomly select the first centroid for each batch member
     batch_indices = torch.arange(B, dtype=torch.long).to(device)
     for i in range(npoint):
         centroids[:, i] = farthest
@@ -80,7 +80,7 @@ def farthest_point_sample(xyz, npoint):
         dist = torch.sum((xyz - centroid) ** 2, -1)
         mask = dist < distance
         distance[mask] = dist[mask]
-        farthest = torch.max(distance, -1)[1]
+        farthest = torch.max(distance, -1)[1] # lizx: if the input point set contains no duplicates, a point will not be selected twice as the centroid, because its `distance` will be zero
     return centroids
 
 
@@ -99,11 +99,11 @@ def query_ball_point(radius, nsample, xyz, new_xyz):
     _, S, _ = new_xyz.shape
     group_idx = torch.arange(N, dtype=torch.long).to(device).view(1, 1, N).repeat([B, S, 1])
     sqrdists = square_distance(new_xyz, xyz)
-    group_idx[sqrdists > radius ** 2] = N
+    group_idx[sqrdists > radius ** 2] = N # lizx: out-of-ball points
     group_idx = group_idx.sort(dim=-1)[0][:, :, :nsample]
     group_first = group_idx[:, :, 0].view(B, S, 1).repeat([1, 1, nsample])
     mask = group_idx == N
-    group_idx[mask] = group_first[mask]
+    group_idx[mask] = group_first[mask] # lizx: make the out-of-ball indices to be the first index in the ball
     return group_idx
 
 
@@ -116,20 +116,20 @@ def sample_and_group(npoint, radius, nsample, xyz, points, returnfps=False):
         xyz: input points position data, [B, N, 3]
         points: input points data, [B, N, D]
     Return:
-        new_xyz: sampled points position data, [B, npoint, nsample, 3]
+        new_xyz: sampled points position data, [B, npoint, 3]
         new_points: sampled points data, [B, npoint, nsample, 3+D]
     """
     B, N, C = xyz.shape
     S = npoint
-    fps_idx = farthest_point_sample(xyz, npoint) # [B, npoint, C]
-    new_xyz = index_points(xyz, fps_idx)
-    idx = query_ball_point(radius, nsample, xyz, new_xyz)
-    grouped_xyz = index_points(xyz, idx) # [B, npoint, nsample, C]
-    grouped_xyz_norm = grouped_xyz - new_xyz.view(B, S, 1, C)
+    fps_idx = farthest_point_sample(xyz, npoint) # get the indices of the farthest points as centroids [B, npoint]
+    new_xyz = index_points(xyz, fps_idx) # get the coords of the farthest points as centroids [B, npoint, C]
+    idx = query_ball_point(radius, nsample, xyz, new_xyz) # get the indices of neighbors of the centroids [B, npoint, nsample]
+    grouped_xyz = index_points(xyz, idx) # get the coords of neighbors of the centroids [B, npoint, nsample, C]
+    grouped_xyz_norm = grouped_xyz - new_xyz.view(B, S, 1, C) # relative displacement of the neighbors to the centroids
 
     if points is not None:
         grouped_points = index_points(points, idx)
-        new_points = torch.cat([grouped_xyz_norm, grouped_points], dim=-1) # [B, npoint, nsample, C+D]
+        new_points = torch.cat([grouped_xyz_norm, grouped_points], dim=-1) # added D channels of feature [B, npoint, nsample, C + D]
     else:
         new_points = grouped_xyz_norm
     if returnfps:
@@ -138,7 +138,7 @@ def sample_and_group(npoint, radius, nsample, xyz, points, returnfps=False):
         return new_xyz, new_points
 
 
-def sample_and_group_all(xyz, points):
+def sample_and_group_all(xyz, points): # lizx: group everything into one group
     """
     Input:
         xyz: input points position data, [B, N, 3]
@@ -168,7 +168,7 @@ class PointNetSetAbstraction(nn.Module):
         self.mlp_bns = nn.ModuleList()
         last_channel = in_channel
         for out_channel in mlp:
-            self.mlp_convs.append(nn.Conv2d(last_channel, out_channel, 1))
+            self.mlp_convs.append(nn.Conv2d(last_channel, out_channel, 1)) # lizx: 1x1 convolution
             self.mlp_bns.append(nn.BatchNorm2d(out_channel))
             last_channel = out_channel
         self.group_all = group_all
@@ -177,28 +177,28 @@ class PointNetSetAbstraction(nn.Module):
         """
         Input:
             xyz: input points position data, [B, C, N]
-            points: input points data, [B, D, N]
+            points: input points features data, [B, D, N]
         Return:
             new_xyz: sampled points position data, [B, C, S]
             new_points_concat: sample points feature data, [B, D', S]
         """
-        xyz = xyz.permute(0, 2, 1)
+        xyz = xyz.permute(0, 2, 1) # [B, N, C]
         if points is not None:
-            points = points.permute(0, 2, 1)
+            points = points.permute(0, 2, 1) # [B, N, D]
 
         if self.group_all:
-            new_xyz, new_points = sample_and_group_all(xyz, points)
+            new_xyz, new_points = sample_and_group_all(xyz, points) # new_xyz (zero vector): [B, 1, C], new_points: [B, 1, N, C + D]
         else:
-            new_xyz, new_points = sample_and_group(self.npoint, self.radius, self.nsample, xyz, points)
+            new_xyz, new_points = sample_and_group(self.npoint, self.radius, self.nsample, xyz, points) # new_xyz: [B, npoint, C], new_points: [B, npoint, nsample, C + D]
         # new_xyz: sampled points position data, [B, npoint, C]
         # new_points: sampled points data, [B, npoint, nsample, C+D]
-        new_points = new_points.permute(0, 3, 2, 1) # [B, C+D, nsample,npoint]
+        new_points = new_points.permute(0, 3, 2, 1) # [B, C+D, nsample, npoint]
         for i, conv in enumerate(self.mlp_convs):
             bn = self.mlp_bns[i]
             new_points =  F.relu(bn(conv(new_points)))
 
-        new_points = torch.max(new_points, 2)[0]
-        new_xyz = new_xyz.permute(0, 2, 1)
+        new_points = torch.max(new_points, 2)[0] # [B, out_channel, npoint]
+        new_xyz = new_xyz.permute(0, 2, 1) # new_xyz: [B, C, npoint]
         return new_xyz, new_points
 
 
