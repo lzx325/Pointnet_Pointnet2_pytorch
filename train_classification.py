@@ -132,6 +132,7 @@ def main(args):
     shutil.copy('./train_classification.py', str(exp_dir))
 
     classifier = model.get_model(num_class, normal_channel=args.use_normals)
+    print(args.model)
     criterion = model.get_loss()
     classifier.apply(inplace_relu)
  
